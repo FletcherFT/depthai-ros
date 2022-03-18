@@ -1,8 +1,7 @@
 #pragma once
 
-#include <depthai_bridge/ImageConverter.hpp>
-
-#include "depthai/depthai.hpp"
+#include <depthai/depthai.hpp>
+#include <deque>
 
 #ifdef IS_ROS2
     #include <vision_msgs/msg/detection2_d_array.hpp>
@@ -32,14 +31,11 @@ class ImgDetectionConverter {
     // DetectionConverter() = default;
     ImgDetectionConverter(std::string frameName, int width, int height, bool normalized = false);
 
-    void toRosMsg(std::shared_ptr<dai::ImgDetections> inNetData, VisionMsgs::Detection2DArray& opDetectionMsg, TimePoint tStamp, int32_t sequenceNum = -1);
-
-    void toRosMsg(std::shared_ptr<dai::ImgDetections> inNetData, VisionMsgs::Detection2DArray& opDetectionMsg);
+    void toRosMsg(std::shared_ptr<dai::ImgDetections> inNetData, std::deque<VisionMsgs::Detection2DArray>& opDetectionMsgs);
 
     Detection2DArrayPtr toRosMsgPtr(std::shared_ptr<dai::ImgDetections> inNetData);
 
    private:
-    uint32_t _sequenceNum;
     int _width, _height;
     const std::string _frameName;
     bool _normalized;

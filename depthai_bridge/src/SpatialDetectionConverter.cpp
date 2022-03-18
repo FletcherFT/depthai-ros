@@ -4,35 +4,28 @@ namespace dai {
 namespace ros {
 
 SpatialDetectionConverter::SpatialDetectionConverter(std::string frameName, int width, int height, bool normalized)
-    : _frameName(frameName), _width(width), _height(height), _normalized(normalized), _sequenceNum(0) {}
+    : _frameName(frameName), _width(width), _height(height), _normalized(normalized) {}
 
 void SpatialDetectionConverter::toRosMsg(std::shared_ptr<dai::SpatialImgDetections> inNetData,
-                                         SpatialMessages::SpatialDetectionArray& opDetectionMsg,
-                                         TimePoint tStamp,
-                                         int32_t sequenceNum) {
-    toRosMsg(inNetData, opDetectionMsg);
-    int32_t sec = std::chrono::duration_cast<std::chrono::seconds>(tStamp.time_since_epoch()).count();
-    int32_t nsec = std::chrono::duration_cast<std::chrono::nanoseconds>(tStamp.time_since_epoch()).count() % 1000000000UL;
+                                         std::deque<SpatialMessages::SpatialDetectionArray>& opDetectionMsgs) {
+    // setting the header
+    auto tstamp = inNetData->getTimestamp();
+    SpatialMessages::SpatialDetectionArray opDetectionMsg;
 
 #ifndef IS_ROS2
-    if(sequenceNum != -1) _sequenceNum = sequenceNum;
-    opDetectionMsg.header.seq = _sequenceNum;
-    opDetectionMsg.header.stamp = ::ros::Time(sec, nsec);
+    auto rosNow = ::ros::Time::now();
+    auto steadyTime = std::chrono::steady_clock::now();
+    auto diffTime = steadyTime - tstamp;
+    uint64_t nsec = rosNow.toNSec() - diffTime.count();
+    auto rosStamp = rosNow.fromNSec(nsec);
+    opDetectionMsg.header.stamp = rosStamp;
+    opDetectionMsg.header.seq = inNetData->getSequenceNum();
 #else
-    opDetectionMsg.header.stamp = rclcpp::Time(sec, nsec);
-#endif
-
-    opDetectionMsg.header.frame_id = _frameName;
-}
-
-void SpatialDetectionConverter::toRosMsg(std::shared_ptr<dai::SpatialImgDetections> inNetData, SpatialMessages::SpatialDetectionArray& opDetectionMsg) {
-// setting the header
-#ifndef IS_ROS2
-    opDetectionMsg.header.seq = _sequenceNum;
-    opDetectionMsg.header.stamp = ::ros::Time::now();
-    _sequenceNum++;
-#else
-    opDetectionMsg.header.stamp = rclcpp::Clock().now();
+    auto rclNow = rclcpp::Clock().now();
+    auto steadyTime = std::chrono::steady_clock::now();
+    auto diffTime = steadyTime - tstamp;
+    auto rclStamp = rclNow - diffTime;
+    opDetectionMsg.header.stamp = rclStamp;
 #endif
 
     opDetectionMsg.header.frame_id = _frameName;
@@ -82,15 +75,19 @@ void SpatialDetectionConverter::toRosMsg(std::shared_ptr<dai::SpatialImgDetectio
         opDetectionMsg.detections[i].position.y = inNetData->detections[i].spatialCoordinates.y / 1000;
         opDetectionMsg.detections[i].position.z = inNetData->detections[i].spatialCoordinates.z / 1000;
     }
+
+    opDetectionMsgs.push_back(opDetectionMsg);
 }
 
 SpatialDetectionArrayPtr SpatialDetectionConverter::toRosMsgPtr(std::shared_ptr<dai::SpatialImgDetections> inNetData) {
+    std::deque<SpatialMessages::SpatialDetectionArray> msgQueue;
+    toRosMsg(inNetData, msgQueue);
+    auto msg = msgQueue.front();
 #ifdef IS_ROS2
-    SpatialDetectionArrayPtr ptr = std::make_shared<SpatialMessages::SpatialDetectionArray>();
+    SpatialDetectionArrayPtr ptr = std::make_shared<SpatialMessages::SpatialDetectionArray>(msg);
 #else
-    SpatialDetectionArrayPtr ptr = boost::make_shared<SpatialMessages::SpatialDetectionArray>();
+    SpatialDetectionArrayPtr ptr = boost::make_shared<SpatialMessages::SpatialDetectionArray>(msg);
 #endif
-    toRosMsg(inNetData, *ptr);
     return ptr;
 }
 

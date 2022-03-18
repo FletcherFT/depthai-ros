@@ -1,5 +1,6 @@
 #pragma once
 
+#include <deque>
 #include <thread>
 #include <type_traits>
 #include <typeinfo>
@@ -48,7 +49,7 @@ namespace rosOrigin = ::ros;
 template <class RosMsg, class SimMsg>
 class BridgePublisher {
    public:
-    using ConvertFunc = std::function<void(std::shared_ptr<SimMsg>, RosMsg&)>;
+    using ConvertFunc = std::function<void(std::shared_ptr<SimMsg>, std::deque<RosMsg>&)>;
 
 #ifdef IS_ROS2
     using CustomPublisher = typename std::conditional<std::is_same<RosMsg, ImageMsgs::Image>::value,
@@ -120,7 +121,7 @@ class BridgePublisher {
 
     BridgePublisher(const BridgePublisher& other);
 
-    void addPubisherCallback();
+    void addPublisherCallback();
 
     void publishHelper(std::shared_ptr<SimMsg> inData);
 
@@ -237,8 +238,8 @@ BridgePublisher<RosMsg, SimMsg>::BridgePublisher(std::shared_ptr<dai::DataOutput
                                                  std::string cameraParamUri,
                                                  std::string cameraName)
     : _daiMessageQueue(daiMessageQueue),
-      _nh(nh),
       _converter(converter),
+      _nh(nh),
       _it(_nh),
       _rosTopic(rosTopic),
       _cameraParamUri(cameraParamUri),
@@ -259,8 +260,8 @@ BridgePublisher<RosMsg, SimMsg>::BridgePublisher(std::shared_ptr<dai::DataOutput
       _nh(nh),
       _converter(converter),
       _it(_nh),
-      _rosTopic(rosTopic),
       _cameraInfoData(cameraInfoData),
+      _rosTopic(rosTopic),
       _cameraName(cameraName) {
     // ROS_DEBUG_STREAM_NAMED(LOG_TAG, "Publisher Type : " << typeid(CustomPublisher).name());
     _rosPublisher = advertise(queueSize, std::is_same<RosMsg, ImageMsgs::Image>{});
@@ -312,7 +313,7 @@ template <class RosMsg, class SimMsg>
 void BridgePublisher<RosMsg, SimMsg>::startPublisherThread() {
     if(_isCallbackAdded) {
         std::runtime_error(
-            "addPubisherCallback() function adds a callback to the"
+            "addPublisherCallback() function adds a callback to the"
             "depthai which handles the publishing so no need to start"
             "the thread using startPublisherThread() ");
     }
@@ -341,73 +342,58 @@ void BridgePublisher<RosMsg, SimMsg>::startPublisherThread() {
 }
 
 template <class RosMsg, class SimMsg>
-void BridgePublisher<RosMsg, SimMsg>::addPubisherCallback() {
+void BridgePublisher<RosMsg, SimMsg>::addPublisherCallback() {
     _daiMessageQueue->addCallback(std::bind(&BridgePublisher<RosMsg, SimMsg>::daiCallback, this, std::placeholders::_1, std::placeholders::_2));
     _isCallbackAdded = true;
 }
 
 template <class RosMsg, class SimMsg>
 void BridgePublisher<RosMsg, SimMsg>::publishHelper(std::shared_ptr<SimMsg> inDataPtr) {
-    RosMsg opMsg;
-    if(_camInfoFrameId.empty()) {
-        _converter(inDataPtr, opMsg);
-        _camInfoFrameId = opMsg.header.frame_id;
-    }
-    int infoSubCount = 0;
+    std::deque<RosMsg> opMsgs;
+
+    int infoSubCount = 0, mainSubCount = 0;
 #ifndef IS_ROS2
     if(_isImageMessage) {
         infoSubCount = _cameraInfoPublisher->getNumSubscribers();
     }
-    int numSub = _rosPublisher->getNumSubscribers();
+    mainSubCount = _rosPublisher->getNumSubscribers();
 #else
     if(_isImageMessage) {
         infoSubCount = _node->count_subscribers(_cameraName + "/camera_info");
     }
-    int numSub = _node->count_subscribers(_rosTopic);
+    mainSubCount = _node->count_subscribers(_rosTopic);
 #endif
-    if(numSub > 0) {
-        _converter(inDataPtr, opMsg);
-        _rosPublisher->publish(opMsg);
 
-        if(_isImageMessage) {
-#ifndef IS_ROS2
-            infoSubCount = _cameraInfoPublisher->getNumSubscribers();
-#else
-            infoSubCount = _node->count_subscribers(_cameraName + "/camera_info");
-#endif
+    if(mainSubCount > 0 || infoSubCount > 0) {
+        _converter(inDataPtr, opMsgs);
+
+        while(opMsgs.size()) {
+            RosMsg currMsg = opMsgs.front();
+            if(mainSubCount > 0) {
+                _rosPublisher->publish(currMsg);
+            }
 
             if(infoSubCount > 0) {
+                // if (_isImageMessage){
+                //     _camInfoFrameId = curr.header.frame_id
+                // }
                 auto localCameraInfo = _camInfoManager->getCameraInfo();
 #ifndef IS_ROS2
-                localCameraInfo.header.seq = opMsg.header.seq;
+                localCameraInfo.header.seq = currMsg.header.seq;
 #endif
-                localCameraInfo.header.stamp = opMsg.header.stamp;
-                localCameraInfo.header.frame_id = opMsg.header.frame_id;
+                localCameraInfo.header.stamp = currMsg.header.stamp;
+                localCameraInfo.header.frame_id = currMsg.header.frame_id;
                 _cameraInfoPublisher->publish(localCameraInfo);
             }
+            opMsgs.pop_front();
         }
-    }
-
-    if(_isImageMessage && numSub == 0 && infoSubCount > 0) {
-        _converter(inDataPtr, opMsg);
-        auto localCameraInfo = _camInfoManager->getCameraInfo();
-#ifndef IS_ROS2
-        localCameraInfo.header.seq = opMsg.header.seq;
-#endif
-        localCameraInfo.header.stamp = opMsg.header.stamp;
-        localCameraInfo.header.frame_id = _camInfoFrameId;
-        _cameraInfoPublisher->publish(localCameraInfo);
     }
 }
 
 template <class RosMsg, class SimMsg>
 BridgePublisher<RosMsg, SimMsg>::~BridgePublisher() {
-    _readingThread.join();
+    if(_readingThread.joinable()) _readingThread.join();
 }
-
-// TODO(sachin): alternative methods to publish would be using walltimer here
-// (so I need to create async spinner for that or multithreaded nodehandle??),
-// ANd what about the callbacks ?
 
 }  // namespace ros
 
