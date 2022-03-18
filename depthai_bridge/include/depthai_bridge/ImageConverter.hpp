@@ -60,7 +60,8 @@ class ImageConverter {
                                                   int width = -1,
                                                   int height = -1,
                                                   Point2f topLeftPixelId = Point2f(),
-                                                  Point2f bottomRightPixelId = Point2f());
+                                                  Point2f bottomRightPixelId = Point2f(),
+                                                  dai::CameraBoardSocket referenceId = dai::CameraBoardSocket::RIGHT);
 
    private:
     static std::unordered_map<dai::RawImgFrame::Type, std::string> encodingEnumMap;

@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
 <launch>
     <!-- <args for urdf/> -->
-    <arg name="camera_model"         default="OAK-D" />
+    <arg name="camera_model"         default="oak_d" />
     <arg name="camera_name"          default="oak" />
 
-    <arg name="base_frame"           default="oak-d_frame" />
-    <arg name="parent_frame"         default="oak-d-base-frame" />
+    <arg name="base_frame"           default="oak_d_frame" />
+    <arg name="parent_frame"         default="oak_d_base_frame" />
 
     <arg name="cam_pos_x"             default="0.0" /> <!-- Position respect to base frame (i.e. "base_link) -->
     <arg name="cam_pos_y"             default="0.0" /> <!-- Position respect to base frame (i.e. "base_link) -->

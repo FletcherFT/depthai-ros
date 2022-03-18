@@ -256,7 +256,9 @@ cv::Mat ImageConverter::rosMsgtoCvMat(ImageMsgs::Image& inMsg) {
 }
 
 ImageMsgs::CameraInfo ImageConverter::calibrationToCameraInfo(
-    dai::CalibrationHandler calibHandler, dai::CameraBoardSocket cameraId, int width, int height, Point2f topLeftPixelId, Point2f bottomRightPixelId) {
+    dai::CalibrationHandler calibHandler, dai::CameraBoardSocket cameraId, int width, int height,
+    Point2f topLeftPixelId, Point2f bottomRightPixelId,
+    dai::CameraBoardSocket referenceId) {
     std::vector<std::vector<float>> camIntrinsics, rectifiedRotation;
     std::vector<float> distCoeffs;
     std::vector<double> flatIntrinsics, distCoeffsDouble;
@@ -297,6 +299,14 @@ ImageMsgs::CameraInfo ImageConverter::calibrationToCameraInfo(
 
     std::copy(flatIntrinsics.begin(), flatIntrinsics.end(), intrinsics.begin());
 
+    // Flatten the intrinsics to fit sensor_msgs/Image format.
+    for(int i = 0; i < 3; i++) {
+        std::copy(camIntrinsics[i].begin(), camIntrinsics[i].end(), projection.begin() + 4 * i);
+        projection[(4 * i) + 3] = 0;
+    }
+
+    //std::copy(flatIntrinsics.begin(), flatIntrinsics.end(), projection.begin());  // todo insert properly
+
     distCoeffs = calibHandler.getDistortionCoefficients(cameraId);
 
     for(size_t i = 0; i < 8; i++) {
@@ -304,31 +314,37 @@ ImageMsgs::CameraInfo ImageConverter::calibrationToCameraInfo(
     }
 
     // Setting Projection matrix if the cameras are stereo pair. Right as the first and left as the second.
+    // TODO Something rotten here. Go through line by line.
+    // First make sure that the attached camera does not have the right or left camera enumerated as AUTO
     if(calibHandler.getStereoRightCameraId() != dai::CameraBoardSocket::AUTO && calibHandler.getStereoLeftCameraId() != dai::CameraBoardSocket::AUTO) {
+        // Then check to see if the cameraID enumerates to the right or left camera
         if(calibHandler.getStereoRightCameraId() == cameraId || calibHandler.getStereoLeftCameraId() == cameraId) {
+            // Next obtain the camera intrinsics
             std::vector<std::vector<float>> stereoIntrinsics = calibHandler.getCameraIntrinsics(
-                calibHandler.getStereoRightCameraId(), cameraData.width, cameraData.height, topLeftPixelId, bottomRightPixelId);
+                cameraId, cameraData.width, cameraData.height, topLeftPixelId, bottomRightPixelId);
+            // Flatten the intrinsics to fit sensor_msgs/Image format.
             std::vector<double> stereoFlatIntrinsics(12), flatRectifiedRotation(9);
             for(int i = 0; i < 3; i++) {
                 std::copy(stereoIntrinsics[i].begin(), stereoIntrinsics[i].end(), stereoFlatIntrinsics.begin() + 4 * i);
                 stereoFlatIntrinsics[(4 * i) + 3] = 0;
             }
-
-            if(calibHandler.getStereoLeftCameraId() == cameraId) {
-                // This defines where the first camera is w.r.t second camera coordinate system giving it a translation to place all the points in the first
-                // camera to second camera by multiplying that translation vector using transformation function.
+            // This defines where the first camera is w.r.t second camera coordinate system giving it a translation to place all the points in the first
+            // camera to second camera by multiplying that translation vector using transformation function.
+            if (cameraId != referenceId)
+            {
                 stereoFlatIntrinsics[3] = stereoFlatIntrinsics[0]
-                                          * calibHandler.getCameraExtrinsics(calibHandler.getStereoRightCameraId(), calibHandler.getStereoLeftCameraId())[0][3]
-                                          / 100.0;  // Converting to meters
+                                            * calibHandler.getCameraExtrinsics(referenceId, cameraId)[0][3]
+                                            / 100.0;  // Converting to meters
+            }
+            // Get the rectification rotation matrix depending on the enumeration of the camera
+            if(calibHandler.getStereoLeftCameraId() == cameraId) {
                 rectifiedRotation = calibHandler.getStereoLeftRectificationRotation();
             } else {
                 rectifiedRotation = calibHandler.getStereoRightRectificationRotation();
             }
-
             for(int i = 0; i < 3; i++) {
                 std::copy(rectifiedRotation[i].begin(), rectifiedRotation[i].end(), flatRectifiedRotation.begin() + 3 * i);
             }
-
             std::copy(stereoFlatIntrinsics.begin(), stereoFlatIntrinsics.end(), projection.begin());
             std::copy(flatRectifiedRotation.begin(), flatRectifiedRotation.end(), rotation.begin());
         }
